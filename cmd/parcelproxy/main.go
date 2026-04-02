@@ -1,4 +1,6 @@
 package main
-import("log";"os";"github.com/stockyard-dev/stockyard-parcelproxy/internal/license";"github.com/stockyard-dev/stockyard-parcelproxy/internal/server";"github.com/stockyard-dev/stockyard-parcelproxy/internal/store")
-func main(){port:=getEnv("PORT","9700");dataDir:=getEnv("DATA_DIR","./data");licenseKey:=os.Getenv("PARCELPROXY_LICENSE_KEY");tier:="free";if licenseKey!=""{if license.Validate(licenseKey){tier="pro";log.Println("License valid — Pro tier active")}else{log.Println("Warning: invalid license key")}};db,err:=store.Open(dataDir);if err!=nil{log.Fatalf("store: %v",err)};defer db.Close();srv:=server.New(db,tier);log.Printf("Stockyard Package Registry Proxy listening on :%s (tier: %s)",port,tier);log.Fatal(srv.ListenAndServe(":"+port))}
-func getEnv(key,fallback string)string{if v:=os.Getenv(key);v!=""{return v};return fallback}
+import ("fmt";"log";"net/http";"os";"github.com/stockyard-dev/stockyard-parcelproxy/internal/server";"github.com/stockyard-dev/stockyard-parcelproxy/internal/store")
+func main(){port:=os.Getenv("PORT");if port==""{port="9700"};dataDir:=os.Getenv("DATA_DIR");if dataDir==""{dataDir="./parcelproxy-data"}
+db,err:=store.Open(dataDir);if err!=nil{log.Fatalf("parcelproxy: %v",err)};defer db.Close();srv:=server.New(db)
+fmt.Printf("\n  Parcel Proxy — package registry proxy\n  Dashboard:  http://localhost:%s/ui\n  API:        http://localhost:%s/api\n\n",port,port)
+log.Printf("parcelproxy: listening on :%s",port);log.Fatal(http.ListenAndServe(":"+port,srv))}

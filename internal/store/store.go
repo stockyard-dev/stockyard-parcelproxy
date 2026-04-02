@@ -1,10 +1,23 @@
 package store
-import("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
-type DB struct{*sql.DB}
-type CachedPackage struct{ID int64 `json:"id"`;Registry string `json:"registry"`;Package string `json:"package"`;Version string `json:"version"`;SizeBytes int64 `json:"size_bytes"`;HitCount int `json:"hit_count"`;CachedAt time.Time `json:"cached_at"`}
-func Open(d string)(*DB,error){os.MkdirAll(d,0755);dsn:=filepath.Join(d,"parcelproxy.db")+"?_journal_mode=WAL&_busy_timeout=5000";db,err:=sql.Open("sqlite",dsn);if err!=nil{return nil,fmt.Errorf("open: %w",err)};db.SetMaxOpenConns(1);migrate(db);return &DB{db},nil}
-func migrate(db *sql.DB){db.Exec(`CREATE TABLE IF NOT EXISTS cached_packages(id INTEGER PRIMARY KEY AUTOINCREMENT,registry TEXT NOT NULL,package TEXT NOT NULL,version TEXT NOT NULL,size_bytes INTEGER DEFAULT 0,hit_count INTEGER DEFAULT 1,cached_at DATETIME DEFAULT CURRENT_TIMESTAMP,UNIQUE(registry,package,version))`)}
-func(db *DB)RecordHit(registry,pkg,version string,size int64){db.Exec(`INSERT INTO cached_packages(registry,package,version,size_bytes)VALUES(?,?,?,?) ON CONFLICT(registry,package,version) DO UPDATE SET hit_count=hit_count+1`,registry,pkg,version,size)}
-func(db *DB)List()([]CachedPackage,error){rows,_:=db.Query(`SELECT id,registry,package,version,size_bytes,hit_count,cached_at FROM cached_packages ORDER BY hit_count DESC LIMIT 500`);defer rows.Close();var out[]CachedPackage;for rows.Next(){var c CachedPackage;rows.Scan(&c.ID,&c.Registry,&c.Package,&c.Version,&c.SizeBytes,&c.HitCount,&c.CachedAt);out=append(out,c)};return out,nil}
-func(db *DB)Delete(id int64){db.Exec(`DELETE FROM cached_packages WHERE id=?`,id)}
-func(db *DB)Stats()(map[string]interface{},error){var total int;var size int64;db.QueryRow(`SELECT COUNT(*),COALESCE(SUM(size_bytes),0) FROM cached_packages`).Scan(&total,&size);return map[string]interface{}{"cached_packages":total,"total_bytes":size},nil}
+import ("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
+type DB struct{db *sql.DB}
+type Package struct{
+	ID string `json:"id"`
+	Name string `json:"name"`
+	Registry string `json:"registry"`
+	Version string `json:"version"`
+	CacheHit int `json:"cache_hit"`
+	Size int `json:"size"`
+	CreatedAt string `json:"created_at"`
+}
+func Open(d string)(*DB,error){if err:=os.MkdirAll(d,0755);err!=nil{return nil,err};db,err:=sql.Open("sqlite",filepath.Join(d,"parcelproxy.db")+"?_journal_mode=WAL&_busy_timeout=5000");if err!=nil{return nil,err}
+db.Exec(`CREATE TABLE IF NOT EXISTS packages(id TEXT PRIMARY KEY,name TEXT NOT NULL,registry TEXT DEFAULT '',version TEXT DEFAULT '',cache_hit INTEGER DEFAULT 0,size INTEGER DEFAULT 0,created_at TEXT DEFAULT(datetime('now')))`)
+return &DB{db:db},nil}
+func(d *DB)Close()error{return d.db.Close()}
+func genID()string{return fmt.Sprintf("%d",time.Now().UnixNano())}
+func now()string{return time.Now().UTC().Format(time.RFC3339)}
+func(d *DB)Create(e *Package)error{e.ID=genID();e.CreatedAt=now();_,err:=d.db.Exec(`INSERT INTO packages(id,name,registry,version,cache_hit,size,created_at)VALUES(?,?,?,?,?,?,?)`,e.ID,e.Name,e.Registry,e.Version,e.CacheHit,e.Size,e.CreatedAt);return err}
+func(d *DB)Get(id string)*Package{var e Package;if d.db.QueryRow(`SELECT id,name,registry,version,cache_hit,size,created_at FROM packages WHERE id=?`,id).Scan(&e.ID,&e.Name,&e.Registry,&e.Version,&e.CacheHit,&e.Size,&e.CreatedAt)!=nil{return nil};return &e}
+func(d *DB)List()[]Package{rows,_:=d.db.Query(`SELECT id,name,registry,version,cache_hit,size,created_at FROM packages ORDER BY created_at DESC`);if rows==nil{return nil};defer rows.Close();var o []Package;for rows.Next(){var e Package;rows.Scan(&e.ID,&e.Name,&e.Registry,&e.Version,&e.CacheHit,&e.Size,&e.CreatedAt);o=append(o,e)};return o}
+func(d *DB)Delete(id string)error{_,err:=d.db.Exec(`DELETE FROM packages WHERE id=?`,id);return err}
+func(d *DB)Count()int{var n int;d.db.QueryRow(`SELECT COUNT(*) FROM packages`).Scan(&n);return n}
